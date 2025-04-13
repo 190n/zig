@@ -682,19 +682,35 @@ pub fn handleChildProcessTerm(
     argv: []const []const u8,
 ) error{ MakeFailed, OutOfMemory }!void {
     const arena = s.owner.allocator;
+    const cmd = try allocPrintCmd(arena, opt_cwd, argv);
     switch (term) {
         .Exited => |code| {
             if (code != 0) {
                 return s.fail(
                     "the following command exited with error code {d}:\n{s}",
-                    .{ code, try allocPrintCmd(arena, opt_cwd, argv) },
+                    .{ code, cmd },
                 );
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .Signal, .Stopped => |code| {
+            const how = if (term == .Signal) "killed" else "stopped";
+            inline for (@typeInfo(std.posix.SIG).@"struct".decls) |d| {
+                if (@TypeOf(@field(std.posix.SIG, d.name)) == comptime_int and @field(std.posix.SIG, d.name) == code) {
+                    return s.fail(
+                        "the following command was {s} unexpectedly by SIG{s}:\n{s}",
+                        .{ how, d.name, cmd },
+                    );
+                }
+            }
             return s.fail(
-                "the following command terminated unexpectedly:\n{s}",
-                .{try allocPrintCmd(arena, opt_cwd, argv)},
+                "the following command was {s} unexpectedly by an unknown signal (code {d}):\n{s}",
+                .{ how, code, cmd },
+            );
+        },
+        .Unknown => |code| {
+            return s.fail(
+                "the following command terminated unexpectedly for an unknown reason (code {d}):\n{s}",
+                .{ code, cmd },
             );
         },
     }
